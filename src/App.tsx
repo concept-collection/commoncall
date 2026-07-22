@@ -39,11 +39,28 @@ const disabledStyle: React.CSSProperties = {
   cursor: 'not-allowed'
 }
 
-// A mute/cam-off button while its mute is engaged.
-const engagedBtn: React.CSSProperties = {
+// Square icon-only buttons for the in-call bar. Their meaning is carried by
+// the icon plus a title tooltip and aria-label.
+const iconBtn: React.CSSProperties = {
   ...btn,
+  padding: '0.45rem',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center'
+}
+
+// An icon button whose state is engaged (muted / sharing).
+const engagedIconBtn: React.CSSProperties = {
+  ...iconBtn,
   background: '#555',
   borderColor: '#555',
+  color: '#fff'
+}
+
+const dangerIconBtn: React.CSSProperties = {
+  ...iconBtn,
+  background: '#c62828',
+  borderColor: '#c62828',
   color: '#fff'
 }
 
@@ -52,8 +69,79 @@ const muteChip: React.CSSProperties = {
   background: 'rgba(0, 0, 0, 0.65)',
   color: '#fff',
   borderRadius: 999,
-  padding: '0.15rem 0.6rem',
-  fontSize: '0.8rem'
+  padding: '0.3rem',
+  display: 'inline-flex',
+  alignItems: 'center'
+}
+
+// Stroke-style icon paths (Feather icons, MIT), drawn with currentColor.
+const ICONS = {
+  mic: (
+    <>
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <path d="M12 19v4" />
+      <path d="M8 23h8" />
+    </>
+  ),
+  micOff: (
+    <>
+      <path d="M1 1l22 22" />
+      <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+      <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+      <path d="M12 19v4" />
+      <path d="M8 23h8" />
+    </>
+  ),
+  video: (
+    <>
+      <path d="M23 7l-7 5 7 5V7z" />
+      <rect x="1" y="5" width="15" height="14" rx="2" />
+    </>
+  ),
+  videoOff: (
+    <>
+      <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.66 0H14a2 2 0 0 1 2 2v3.34l1 1L23 7v10" />
+      <path d="M1 1l22 22" />
+    </>
+  ),
+  monitor: (
+    <>
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8" />
+      <path d="M12 17v4" />
+    </>
+  ),
+  phone: (
+    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+  )
+} as const
+
+function Icon({
+  name,
+  size = 18,
+  style
+}: {
+  name: keyof typeof ICONS
+  size?: number
+  style?: React.CSSProperties
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{display: 'block', ...style}}
+      aria-hidden
+    >
+      {ICONS[name]}
+    </svg>
+  )
 }
 
 function VideoView({
@@ -234,8 +322,22 @@ export default function App() {
                   gap: '0.4rem'
                 }}
               >
-                {call.peerAudioMuted && <span style={muteChip}>mic muted</span>}
-                {call.peerVideoMuted && <span style={muteChip}>camera off</span>}
+                {call.peerAudioMuted && (
+                  <span
+                    style={muteChip}
+                    title={`${call.peerName} muted their microphone`}
+                  >
+                    <Icon name="micOff" size={14} />
+                  </span>
+                )}
+                {call.peerVideoMuted && (
+                  <span
+                    style={muteChip}
+                    title={`${call.peerName} turned their camera off`}
+                  >
+                    <Icon name="videoOff" size={14} />
+                  </span>
+                )}
               </div>
             )}
             <VideoView
@@ -273,18 +375,27 @@ export default function App() {
             </span>
             <button
               style={{
-                ...(call.audioMuted ? engagedBtn : btn),
+                ...(call.audioMuted ? engagedIconBtn : iconBtn),
                 ...(call.localStream ? null : disabledStyle)
               }}
               disabled={!call.localStream}
-              title={call.audioMuted ? 'Unmute your microphone' : 'Mute your microphone'}
+              title={
+                call.audioMuted
+                  ? 'Unmute your microphone'
+                  : 'Mute your microphone'
+              }
+              aria-label={
+                call.audioMuted
+                  ? 'Unmute your microphone'
+                  : 'Mute your microphone'
+              }
               onClick={() => network.setAudioMuted(!call.audioMuted)}
             >
-              {call.audioMuted ? 'Unmute' : 'Mute'}
+              <Icon name={call.audioMuted ? 'micOff' : 'mic'} />
             </button>
             <button
               style={{
-                ...(call.videoMuted ? engagedBtn : btn),
+                ...(call.videoMuted ? engagedIconBtn : iconBtn),
                 ...(call.localStream ? null : disabledStyle)
               }}
               disabled={!call.localStream}
@@ -293,9 +404,14 @@ export default function App() {
                   ? 'Turn your camera back on'
                   : 'Turn your camera off'
               }
+              aria-label={
+                call.videoMuted
+                  ? 'Turn your camera back on'
+                  : 'Turn your camera off'
+              }
               onClick={() => network.setVideoMuted(!call.videoMuted)}
             >
-              {call.videoMuted ? 'Cam on' : 'Cam off'}
+              <Icon name={call.videoMuted ? 'videoOff' : 'video'} />
             </button>
             <label
               title="Video quality for both directions — either of you can change it"
@@ -331,23 +447,37 @@ export default function App() {
             </label>
             {canShareScreen && (
               <button
-                style={
-                  call.phase === 'connected'
-                    ? btn
-                    : {...btn, ...disabledStyle}
-                }
+                style={{
+                  ...(call.screenStream ? engagedIconBtn : iconBtn),
+                  ...(call.phase === 'connected' ? null : disabledStyle)
+                }}
                 disabled={call.phase !== 'connected'}
+                title={
+                  call.screenStream
+                    ? 'Stop sharing your screen'
+                    : 'Share your screen'
+                }
+                aria-label={
+                  call.screenStream
+                    ? 'Stop sharing your screen'
+                    : 'Share your screen'
+                }
                 onClick={() =>
                   call.screenStream
                     ? void network.stopScreenShare()
                     : void network.startScreenShare()
                 }
               >
-                {call.screenStream ? 'Stop sharing' : 'Share screen'}
+                <Icon name="monitor" />
               </button>
             )}
-            <button style={dangerBtn} onClick={() => network.endCall()}>
-              Hang up
+            <button
+              style={dangerIconBtn}
+              title="Hang up"
+              aria-label="Hang up"
+              onClick={() => network.endCall()}
+            >
+              <Icon name="phone" style={{transform: 'rotate(135deg)'}} />
             </button>
           </div>
         </section>
