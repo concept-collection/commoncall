@@ -1,4 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
+import {VIDEO_QUALITIES, type VideoQuality} from './p2p/settings'
 import {useNetwork} from './useNetwork'
 
 const short = (id: string) => id.slice(0, 8) + '…'
@@ -227,6 +228,7 @@ export default function App() {
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
+              flexWrap: 'wrap',
               gap: '0.5rem',
               marginTop: '0.5rem'
             }}
@@ -238,6 +240,38 @@ export default function App() {
                   : `In a call with ${call.peerName}`
                 : `Connecting to ${call.peerName}…`}
             </span>
+            <label
+              title="Video quality for both directions — either of you can change it"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                fontSize: '0.9rem'
+              }}
+            >
+              Quality
+              <select
+                value={call.settings.videoQuality}
+                disabled={call.phase !== 'connected'}
+                onChange={e =>
+                  network.setVideoQuality(e.target.value as VideoQuality)
+                }
+                style={{
+                  padding: '0.3rem',
+                  borderRadius: 6,
+                  border: '1px solid #888',
+                  background: '#fff',
+                  fontSize: '0.9rem',
+                  ...(call.phase !== 'connected' ? disabledStyle : null)
+                }}
+              >
+                {VIDEO_QUALITIES.map(q => (
+                  <option key={q} value={q}>
+                    {q[0].toUpperCase() + q.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </label>
             {canShareScreen && (
               <button
                 style={

@@ -12,6 +12,7 @@ src/p2p/
   nostr.ts     minimal relay client + topic scheme    — ported (adds event-id dedup)
   peer.ts      WebRTC wrapper: media tracks + a control data channel
   network.ts   the heart: presence roster + the call state machine
+  settings.ts  shared per-call settings: types, quality presets, validators
 src/App.tsx    join form, roster, ring/accept UI, video views
 ```
 
@@ -35,6 +36,15 @@ src/App.tsx    join form, roster, ring/accept UI, video views
   replaces the camera track in place (screen instead of camera, not alongside).
   Same-kind replacement avoids renegotiation, which the one-offer design cannot
   do — never addTrack mid-call.
+- **Shared call settings ride the control channel.** One settings object per
+  call (reset each call), editable by either side; sync is per-key
+  last-writer-wins via `{t:'set', key, value, rev}` — a same-rev tie resolves
+  to the smaller peer ID's value on both sides. The video-quality presets map
+  to `RTCRtpSender.setParameters` caps (maxBitrate / scaleResolutionDownBy /
+  maxFramerate), which each side applies to its OWN sender — live, no
+  renegotiation. While screen sharing, resolution downscaling is skipped
+  (downscaled text is unreadable) and degradationPreference is
+  maintain-resolution; caps are re-derived on every share start/stop.
 
 ## Testing
 

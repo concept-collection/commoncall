@@ -9,6 +9,14 @@ export type Signal =
   | {type: 'answer'; sdp: string}
   | {type: 'candidate'; candidate: RTCIceCandidateInit}
 
+/** Caps for the outgoing video encoding; an undefined field CLEARS that cap. */
+export interface VideoSendParams {
+  maxBitrate?: number
+  scaleResolutionDownBy?: number
+  maxFramerate?: number
+  degradationPreference?: 'balanced' | 'maintain-framerate' | 'maintain-resolution'
+}
+
 export interface PeerHandlers {
   signal: (signal: Signal) => void
   /** Connection reached the 'connected' state. */
@@ -44,6 +52,8 @@ const DISCONNECT_GRACE_MS = 5000
 export class Peer {
   private pc: RTCPeerConnection
   private channel: RTCDataChannel | null = null
+  /** Control messages sent before the channel opens; flushed on open. */
+  private outbox: string[] = []
   private handlers: Partial<PeerHandlers> = {}
   private pendingCandidates: RTCIceCandidateInit[] = []
   private disconnectTimer: number | null = null
@@ -104,6 +114,11 @@ export class Peer {
 
   private setupChannel(channel: RTCDataChannel) {
     this.channel = channel
+    const flush = () => {
+      for (const data of this.outbox.splice(0)) channel.send(data)
+    }
+    if (channel.readyState === 'open') flush()
+    else channel.onopen = flush
     channel.onclose = () => this.destroy()
     channel.onmessage = e => {
       if (typeof e.data === 'string') this.handlers.data?.(e.data)
@@ -169,6 +184,7 @@ export class Peer {
 
   send(data: string) {
     if (this.channel?.readyState === 'open') this.channel.send(data)
+    else if (!this.closed) this.outbox.push(data)
   }
 
   /** Swap the outgoing video track in place (camera ↔ screen). A same-kind
@@ -180,6 +196,38 @@ export class Peer {
     if (!sender) return false
     try {
       await sender.replaceTrack(track)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** Cap (or uncap) the outgoing video encoding. Like replaceTrack,
+   *  setParameters applies live with no renegotiation, so it fits the
+   *  one-offer design. */
+  async setVideoParameters(opts: VideoSendParams): Promise<boolean> {
+    if (this.closed) return false
+    const sender = this.pc.getSenders().find(s => s.track?.kind === 'video')
+    if (!sender) return false
+    const params = sender.getParameters()
+    const enc = params.encodings[0]
+    if (!enc) return false // no negotiated encoding yet
+    if (opts.maxBitrate === undefined) delete enc.maxBitrate
+    else enc.maxBitrate = opts.maxBitrate
+    if (opts.scaleResolutionDownBy === undefined) {
+      delete enc.scaleResolutionDownBy
+    } else {
+      enc.scaleResolutionDownBy = opts.scaleResolutionDownBy
+    }
+    if (opts.maxFramerate === undefined) delete enc.maxFramerate
+    else enc.maxFramerate = opts.maxFramerate
+    // Not in all TS dom typings, but supported by Chrome/Safari; harmless
+    // where ignored.
+    const p = params as {degradationPreference?: string}
+    if (opts.degradationPreference === undefined) delete p.degradationPreference
+    else p.degradationPreference = opts.degradationPreference
+    try {
+      await sender.setParameters(params)
       return true
     } catch {
       return false

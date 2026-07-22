@@ -1,6 +1,13 @@
 import {selfId} from './identity'
 import {Nostr, peerTopic, rootTopic} from './nostr'
 import {Peer, type Signal} from './peer'
+import {
+  DEFAULT_SETTINGS,
+  QUALITY_PARAMS,
+  SETTING_VALIDATORS,
+  type CallSettings,
+  type VideoQuality
+} from './settings'
 
 // ---------------------------------------------------------------------------
 // CommonCall network layer.
@@ -33,6 +40,11 @@ type PeerMsg =
   | {t: 'hang-up'}
   | {t: 'signal'; signal: Signal}
 
+// Messages on the in-call control data channel (WebRTC, not nostr).
+type ControlMsg =
+  | {t: 'hang-up'}
+  | {t: 'set'; key: string; value: unknown; rev: number}
+
 const ROOM_ID = 'default'
 const ANNOUNCE_INTERVAL_MS = 5000
 const PRESENCE_TTL_MS = 15000
@@ -57,6 +69,10 @@ interface Call {
   screenStream: MediaStream | null
   /** Signals that arrived before our getUserMedia resolved. */
   pendingSignals: Signal[]
+  /** Shared settings for this call, synced over the control channel. */
+  settings: CallSettings
+  /** Per-key revision counters for the last-writer-wins settings sync. */
+  settingsRevs: Partial<Record<keyof CallSettings, number>>
   ringInterval: number | null
   ringTimeout: number | null
   connectTimeout: number | null
@@ -75,6 +91,7 @@ export interface CallInfo {
   localStream: MediaStream | null
   remoteStream: MediaStream | null
   screenStream: MediaStream | null
+  settings: CallSettings
 }
 
 export interface Snapshot {
@@ -268,6 +285,8 @@ export class Network {
       remoteStream: null,
       screenStream: null,
       pendingSignals: [],
+      settings: {...DEFAULT_SETTINGS},
+      settingsRevs: {},
       ringInterval: null,
       ringTimeout: null,
       connectTimeout: null
@@ -341,14 +360,17 @@ export class Network {
         this.rebuildSnapshot()
       },
       data: raw => {
-        let msg: {t?: string}
+        if (this.call !== call) return
+        let msg: ControlMsg
         try {
           msg = JSON.parse(raw)
         } catch {
           return
         }
-        if (msg.t === 'hang-up' && this.call === call) {
+        if (msg.t === 'hang-up') {
           this.teardown(`${call.peerName} hung up.`)
+        } else if (msg.t === 'set') {
+          this.applyRemoteSetting(call, msg)
         }
       },
       close: () => {
@@ -359,6 +381,69 @@ export class Network {
       void peer.signal(signal)
     }
     this.rebuildSnapshot()
+  }
+
+  // ---- shared call settings --------------------------------------------
+  //
+  // One settings object per call, visible and editable by BOTH parties.
+  // Sync is per-key last-writer-wins over the control channel: every change
+  // bumps that key's revision counter and is sent as {t:'set'}. The channel
+  // is reliable and ordered, so divergence only happens when both sides
+  // change the same key concurrently (same revision) — that tie must resolve
+  // identically on both sides, so the smaller peer ID's value wins.
+
+  private setSetting<K extends keyof CallSettings>(
+    key: K,
+    value: CallSettings[K]
+  ) {
+    const call = this.call
+    if (!call || !call.peer || call.settings[key] === value) return
+    const rev = (call.settingsRevs[key] ?? 0) + 1
+    call.settingsRevs[key] = rev
+    call.settings = {...call.settings}
+    call.settings[key] = value
+    call.peer.send(JSON.stringify({t: 'set', key, value, rev}))
+    this.settingChanged(call, key)
+    this.rebuildSnapshot()
+  }
+
+  private applyRemoteSetting(
+    call: Call,
+    msg: {key: string; value: unknown; rev: number}
+  ) {
+    if (!(msg.key in SETTING_VALIDATORS)) return
+    const key = msg.key as keyof CallSettings
+    if (!SETTING_VALIDATORS[key](msg.value)) return
+    if (!Number.isInteger(msg.rev) || msg.rev < 1) return
+    const localRev = call.settingsRevs[key] ?? 0
+    if (msg.rev < localRev) return // stale
+    if (msg.rev === localRev && selfId < call.peerId) return // tie: we win
+    call.settingsRevs[key] = msg.rev
+    if (call.settings[key] === msg.value) return
+    call.settings = {...call.settings}
+    call.settings[key] = msg.value
+    this.settingChanged(call, key)
+    this.rebuildSnapshot()
+  }
+
+  /** Side effects of a setting taking a new value (local or remote). */
+  private settingChanged(call: Call, key: keyof CallSettings) {
+    if (key === 'videoQuality') this.applyVideoParams(call)
+  }
+
+  /** Push the current quality preset into the outgoing video sender. */
+  private applyVideoParams(call: Call) {
+    if (!call.peer) return
+    const p = QUALITY_PARAMS[call.settings.videoQuality]
+    const sharing = call.screenStream !== null
+    void call.peer.setVideoParameters({
+      maxBitrate: p.maxBitrate,
+      // Downscaled screen text is unreadable: while sharing, send full
+      // resolution and let the bitrate/framerate caps do the limiting.
+      scaleResolutionDownBy: sharing ? undefined : p.scaleResolutionDownBy,
+      maxFramerate: p.maxFramerate,
+      degradationPreference: sharing ? 'maintain-resolution' : undefined
+    })
   }
 
   private teardown(notice: string | null) {
@@ -448,6 +533,12 @@ export class Network {
     this.teardown(null)
   }
 
+  /** Change the shared video-quality preset. It applies to BOTH senders:
+   *  each side caps its own outgoing video, and the change syncs across. */
+  setVideoQuality(quality: VideoQuality) {
+    this.setSetting('videoQuality', quality)
+  }
+
   /** Swap the outgoing camera track for a screen capture. The remote side
    *  sees the screen in place of the camera; no renegotiation involved. */
   async startScreenShare() {
@@ -469,6 +560,7 @@ export class Network {
       return
     }
     call.screenStream = stream
+    this.applyVideoParams(call) // re-derive caps for screen-share mode
     // The browser's own "Stop sharing" bar ends the track; swap back then.
     track.onended = () => void this.stopScreenShare()
     this.rebuildSnapshot()
@@ -482,7 +574,10 @@ export class Network {
     const camTrack = call.localStream?.getVideoTracks()[0]
     if (call.peer && camTrack) await call.peer.replaceVideoTrack(camTrack)
     for (const t of screen.getTracks()) t.stop()
-    if (this.call === call) this.rebuildSnapshot()
+    if (this.call === call) {
+      this.applyVideoParams(call) // restore camera-mode caps
+      this.rebuildSnapshot()
+    }
   }
 
   dismissNotice() {
@@ -511,7 +606,8 @@ export class Network {
           peerName: this.call.peerName,
           localStream: this.call.localStream,
           remoteStream: this.call.remoteStream,
-          screenStream: this.call.screenStream
+          screenStream: this.call.screenStream,
+          settings: this.call.settings
         }
       : null
     this.snapshot = {
