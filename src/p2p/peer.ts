@@ -171,6 +171,21 @@ export class Peer {
     if (this.channel?.readyState === 'open') this.channel.send(data)
   }
 
+  /** Swap the outgoing video track in place (camera ↔ screen). A same-kind
+   *  replaceTrack does not trigger renegotiation, so no signaling is needed
+   *  and the one-offer design is preserved. */
+  async replaceVideoTrack(track: MediaStreamTrack): Promise<boolean> {
+    if (this.closed) return false
+    const sender = this.pc.getSenders().find(s => s.track?.kind === 'video')
+    if (!sender) return false
+    try {
+      await sender.replaceTrack(track)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   get isConnected(): boolean {
     return this.pc.connectionState === 'connected'
   }

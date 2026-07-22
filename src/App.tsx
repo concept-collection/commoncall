@@ -3,6 +3,11 @@ import {useNetwork} from './useNetwork'
 
 const short = (id: string) => id.slice(0, 8) + '…'
 
+// Screen capture is desktop-only in practice; hide the button where the API
+// doesn't exist (most mobile browsers).
+const canShareScreen =
+  typeof navigator.mediaDevices?.getDisplayMedia === 'function'
+
 const btn: React.CSSProperties = {
   padding: '0.4rem 1rem',
   borderRadius: 6,
@@ -202,7 +207,7 @@ export default function App() {
               }}
             />
             <VideoView
-              stream={call.localStream}
+              stream={call.screenStream ?? call.localStream}
               muted
               style={{
                 position: 'absolute',
@@ -212,7 +217,8 @@ export default function App() {
                 background: '#000',
                 border: '1px solid #444',
                 borderRadius: 6,
-                transform: 'scaleX(-1)'
+                // Mirror the camera preview, but never the shared screen.
+                transform: call.screenStream ? undefined : 'scaleX(-1)'
               }}
             />
           </div>
@@ -221,14 +227,34 @@ export default function App() {
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
+              gap: '0.5rem',
               marginTop: '0.5rem'
             }}
           >
-            <span>
+            <span style={{flex: 1}}>
               {call.phase === 'connected'
-                ? `In a call with ${call.peerName}`
+                ? call.screenStream
+                  ? `Sharing your screen with ${call.peerName}`
+                  : `In a call with ${call.peerName}`
                 : `Connecting to ${call.peerName}…`}
             </span>
+            {canShareScreen && (
+              <button
+                style={
+                  call.phase === 'connected'
+                    ? btn
+                    : {...btn, ...disabledStyle}
+                }
+                disabled={call.phase !== 'connected'}
+                onClick={() =>
+                  call.screenStream
+                    ? void network.stopScreenShare()
+                    : void network.startScreenShare()
+                }
+              >
+                {call.screenStream ? 'Stop sharing' : 'Share screen'}
+              </button>
+            )}
             <button style={dangerBtn} onClick={() => network.endCall()}>
               Hang up
             </button>

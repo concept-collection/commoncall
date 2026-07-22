@@ -53,6 +53,8 @@ interface Call {
   peer: Peer | null
   localStream: MediaStream | null
   remoteStream: MediaStream | null
+  /** Set while the outgoing video track is a screen capture, not the camera. */
+  screenStream: MediaStream | null
   /** Signals that arrived before our getUserMedia resolved. */
   pendingSignals: Signal[]
   ringInterval: number | null
@@ -72,6 +74,7 @@ export interface CallInfo {
   peerName: string
   localStream: MediaStream | null
   remoteStream: MediaStream | null
+  screenStream: MediaStream | null
 }
 
 export interface Snapshot {
@@ -263,6 +266,7 @@ export class Network {
       peer: null,
       localStream: null,
       remoteStream: null,
+      screenStream: null,
       pendingSignals: [],
       ringInterval: null,
       ringTimeout: null,
@@ -366,6 +370,9 @@ export class Network {
     if (call.localStream) {
       for (const track of call.localStream.getTracks()) track.stop()
     }
+    if (call.screenStream) {
+      for (const track of call.screenStream.getTracks()) track.stop()
+    }
     this.notice = notice
     this.rebuildSnapshot()
     void this.announce()
@@ -441,6 +448,43 @@ export class Network {
     this.teardown(null)
   }
 
+  /** Swap the outgoing camera track for a screen capture. The remote side
+   *  sees the screen in place of the camera; no renegotiation involved. */
+  async startScreenShare() {
+    const call = this.call
+    if (!call || !call.peer || call.screenStream) return
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({video: true})
+    } catch {
+      return // user canceled the picker (or capture is unsupported)
+    }
+    const track = stream.getVideoTracks()[0]
+    const ok =
+      this.call === call && call.peer && track
+        ? await call.peer.replaceVideoTrack(track)
+        : false
+    if (!ok || this.call !== call) {
+      for (const t of stream.getTracks()) t.stop()
+      return
+    }
+    call.screenStream = stream
+    // The browser's own "Stop sharing" bar ends the track; swap back then.
+    track.onended = () => void this.stopScreenShare()
+    this.rebuildSnapshot()
+  }
+
+  async stopScreenShare() {
+    const call = this.call
+    if (!call || !call.screenStream) return
+    const screen = call.screenStream
+    call.screenStream = null
+    const camTrack = call.localStream?.getVideoTracks()[0]
+    if (call.peer && camTrack) await call.peer.replaceVideoTrack(camTrack)
+    for (const t of screen.getTracks()) t.stop()
+    if (this.call === call) this.rebuildSnapshot()
+  }
+
   dismissNotice() {
     this.notice = null
     this.rebuildSnapshot()
@@ -466,7 +510,8 @@ export class Network {
           peerId: this.call.peerId,
           peerName: this.call.peerName,
           localStream: this.call.localStream,
-          remoteStream: this.call.remoteStream
+          remoteStream: this.call.remoteStream,
+          screenStream: this.call.screenStream
         }
       : null
     this.snapshot = {

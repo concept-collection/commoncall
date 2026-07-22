@@ -7,7 +7,7 @@ Serverless peer-to-peer video calls in the browser.
 Visit the page, enter an ID, and you'll see the IDs of everyone else currently
 on the page. Click a visitor to request a call; once they accept — both users
 must agree — a direct WebRTC connection is established and audio/video flows
-peer-to-peer.
+peer-to-peer. During a call you can share your screen in place of your camera.
 
 ## How it works
 

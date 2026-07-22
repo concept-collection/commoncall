@@ -31,6 +31,10 @@ src/App.tsx    join form, roster, ring/accept UI, video views
 - **Deterministic initiator.** The smaller peer ID creates the offer, same as
   commonview — no perfect-negotiation glare handling. Both sides add their
   tracks before signaling starts so one offer/answer round covers all media.
+- **Screen share = track swap.** `getDisplayMedia` + `RTCRtpSender.replaceTrack`
+  replaces the camera track in place (screen instead of camera, not alongside).
+  Same-kind replacement avoids renegotiation, which the one-offer design cannot
+  do — never addTrack mid-call.
 
 ## Testing
 
