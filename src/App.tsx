@@ -26,6 +26,13 @@ const dangerBtn: React.CSSProperties = {
   color: '#fff'
 }
 
+// Merged into a button's style whenever it is disabled, so the explicit
+// background colors above don't leave a disabled button looking clickable.
+const disabledStyle: React.CSSProperties = {
+  opacity: 0.4,
+  cursor: 'not-allowed'
+}
+
 function VideoView({
   stream,
   muted,
@@ -116,7 +123,12 @@ export default function App() {
           You are <strong>{name}</strong>{' '}
           <code style={{color: '#999'}}>{short(selfId)}</code>{' '}
           <button
-            style={{...btn, fontSize: '0.85rem', padding: '0.2rem 0.6rem'}}
+            style={{
+              ...btn,
+              fontSize: '0.85rem',
+              padding: '0.2rem 0.6rem',
+              ...(inCall ? disabledStyle : null)
+            }}
             onClick={() => network.leave()}
             disabled={inCall}
           >
@@ -244,13 +256,19 @@ export default function App() {
                     {p.busy ? 'in a call' : 'available'}
                   </td>
                   <td style={{padding: '0.4rem', textAlign: 'right'}}>
-                    <button
-                      style={primaryBtn}
-                      disabled={!name || call !== null || p.busy}
-                      onClick={() => network.callPeer(p.peerId)}
-                    >
-                      Call
-                    </button>
+                    {(() => {
+                      const disabled = !name || call !== null || p.busy
+                      return (
+                        <button
+                          style={disabled ? {...primaryBtn, ...disabledStyle} : primaryBtn}
+                          disabled={disabled}
+                          title={!name ? 'Enter an ID above to call' : undefined}
+                          onClick={() => network.callPeer(p.peerId)}
+                        >
+                          Call
+                        </button>
+                      )
+                    })()}
                   </td>
                 </tr>
               ))}
