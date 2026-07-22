@@ -45,6 +45,13 @@ src/App.tsx    join form, roster, ring/accept UI, video views
   renegotiation. While screen sharing, resolution downscaling is skipped
   (downscaled text is unreadable) and degradationPreference is
   maintain-resolution; caps are re-derived on every share start/stop.
+- **Mute is per-party, NOT a shared setting.** Each side owns its own flags —
+  no revision counters, the ordered control channel makes last-sent win.
+  Toggling `track.enabled` sends silence/black without renegotiation; the
+  other side is told via `{t:'mute', audio, video}` and shows badges. The
+  notice carries the EFFECTIVE outgoing video state: while screen sharing the
+  screen is always live, so a muted camera is latent until the share ends
+  (share start/stop re-sends the notice).
 
 ## Testing
 

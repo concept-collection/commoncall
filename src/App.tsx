@@ -39,6 +39,23 @@ const disabledStyle: React.CSSProperties = {
   cursor: 'not-allowed'
 }
 
+// A mute/cam-off button while its mute is engaged.
+const engagedBtn: React.CSSProperties = {
+  ...btn,
+  background: '#555',
+  borderColor: '#555',
+  color: '#fff'
+}
+
+// Badge overlaid on the remote video reporting the other party's mute state.
+const muteChip: React.CSSProperties = {
+  background: 'rgba(0, 0, 0, 0.65)',
+  color: '#fff',
+  borderRadius: 999,
+  padding: '0.15rem 0.6rem',
+  fontSize: '0.8rem'
+}
+
 function VideoView({
   stream,
   muted,
@@ -207,6 +224,20 @@ export default function App() {
                 objectFit: 'cover'
               }}
             />
+            {(call.peerAudioMuted || call.peerVideoMuted) && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 10,
+                  left: 10,
+                  display: 'flex',
+                  gap: '0.4rem'
+                }}
+              >
+                {call.peerAudioMuted && <span style={muteChip}>mic muted</span>}
+                {call.peerVideoMuted && <span style={muteChip}>camera off</span>}
+              </div>
+            )}
             <VideoView
               stream={call.screenStream ?? call.localStream}
               muted
@@ -240,6 +271,32 @@ export default function App() {
                   : `In a call with ${call.peerName}`
                 : `Connecting to ${call.peerName}…`}
             </span>
+            <button
+              style={{
+                ...(call.audioMuted ? engagedBtn : btn),
+                ...(call.localStream ? null : disabledStyle)
+              }}
+              disabled={!call.localStream}
+              title={call.audioMuted ? 'Unmute your microphone' : 'Mute your microphone'}
+              onClick={() => network.setAudioMuted(!call.audioMuted)}
+            >
+              {call.audioMuted ? 'Unmute' : 'Mute'}
+            </button>
+            <button
+              style={{
+                ...(call.videoMuted ? engagedBtn : btn),
+                ...(call.localStream ? null : disabledStyle)
+              }}
+              disabled={!call.localStream}
+              title={
+                call.videoMuted
+                  ? 'Turn your camera back on'
+                  : 'Turn your camera off'
+              }
+              onClick={() => network.setVideoMuted(!call.videoMuted)}
+            >
+              {call.videoMuted ? 'Cam on' : 'Cam off'}
+            </button>
             <label
               title="Video quality for both directions — either of you can change it"
               style={{

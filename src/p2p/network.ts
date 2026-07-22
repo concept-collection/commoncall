@@ -44,6 +44,7 @@ type PeerMsg =
 type ControlMsg =
   | {t: 'hang-up'}
   | {t: 'set'; key: string; value: unknown; rev: number}
+  | {t: 'mute'; audio: boolean; video: boolean}
 
 const ROOM_ID = 'default'
 const ANNOUNCE_INTERVAL_MS = 5000
@@ -73,6 +74,12 @@ interface Call {
   settings: CallSettings
   /** Per-key revision counters for the last-writer-wins settings sync. */
   settingsRevs: Partial<Record<keyof CallSettings, number>>
+  /** Local mute state (audio = mic; video = camera, latent while sharing). */
+  audioMuted: boolean
+  videoMuted: boolean
+  /** The other party's effective outgoing mute state, as they reported it. */
+  peerAudioMuted: boolean
+  peerVideoMuted: boolean
   ringInterval: number | null
   ringTimeout: number | null
   connectTimeout: number | null
@@ -92,6 +99,10 @@ export interface CallInfo {
   remoteStream: MediaStream | null
   screenStream: MediaStream | null
   settings: CallSettings
+  audioMuted: boolean
+  videoMuted: boolean
+  peerAudioMuted: boolean
+  peerVideoMuted: boolean
 }
 
 export interface Snapshot {
@@ -287,6 +298,10 @@ export class Network {
       pendingSignals: [],
       settings: {...DEFAULT_SETTINGS},
       settingsRevs: {},
+      audioMuted: false,
+      videoMuted: false,
+      peerAudioMuted: false,
+      peerVideoMuted: false,
       ringInterval: null,
       ringTimeout: null,
       connectTimeout: null
@@ -371,6 +386,13 @@ export class Network {
           this.teardown(`${call.peerName} hung up.`)
         } else if (msg.t === 'set') {
           this.applyRemoteSetting(call, msg)
+        } else if (msg.t === 'mute') {
+          if (typeof msg.audio !== 'boolean' || typeof msg.video !== 'boolean') {
+            return
+          }
+          call.peerAudioMuted = msg.audio
+          call.peerVideoMuted = msg.video
+          this.rebuildSnapshot()
         }
       },
       close: () => {
@@ -444,6 +466,44 @@ export class Network {
       maxFramerate: p.maxFramerate,
       degradationPreference: sharing ? 'maintain-resolution' : undefined
     })
+  }
+
+  // ---- mute ------------------------------------------------------------
+  //
+  // Mute is per-party state, not a shared setting: each side owns its own
+  // flags (so no revision counters — the ordered channel makes last-sent
+  // win naturally) and just notifies the other side. Toggling track.enabled
+  // sends silence/black frames without renegotiation.
+
+  setAudioMuted(muted: boolean) {
+    const call = this.call
+    if (!call || !call.localStream || call.audioMuted === muted) return
+    call.audioMuted = muted
+    for (const t of call.localStream.getAudioTracks()) t.enabled = !muted
+    this.sendMuteNotice(call)
+    this.rebuildSnapshot()
+  }
+
+  setVideoMuted(muted: boolean) {
+    const call = this.call
+    if (!call || !call.localStream || call.videoMuted === muted) return
+    call.videoMuted = muted
+    for (const t of call.localStream.getVideoTracks()) t.enabled = !muted
+    this.sendMuteNotice(call)
+    this.rebuildSnapshot()
+  }
+
+  /** Tell the peer our EFFECTIVE outgoing mute state: while screen sharing
+   *  the outgoing video is the (always live) screen, so a muted camera is
+   *  latent until the share ends. */
+  private sendMuteNotice(call: Call) {
+    call.peer?.send(
+      JSON.stringify({
+        t: 'mute',
+        audio: call.audioMuted,
+        video: call.videoMuted && !call.screenStream
+      })
+    )
   }
 
   private teardown(notice: string | null) {
@@ -561,6 +621,7 @@ export class Network {
     }
     call.screenStream = stream
     this.applyVideoParams(call) // re-derive caps for screen-share mode
+    this.sendMuteNotice(call) // outgoing video is now the live screen
     // The browser's own "Stop sharing" bar ends the track; swap back then.
     track.onended = () => void this.stopScreenShare()
     this.rebuildSnapshot()
@@ -576,6 +637,7 @@ export class Network {
     for (const t of screen.getTracks()) t.stop()
     if (this.call === call) {
       this.applyVideoParams(call) // restore camera-mode caps
+      this.sendMuteNotice(call) // the camera, with its mute state, is back
       this.rebuildSnapshot()
     }
   }
@@ -607,7 +669,11 @@ export class Network {
           localStream: this.call.localStream,
           remoteStream: this.call.remoteStream,
           screenStream: this.call.screenStream,
-          settings: this.call.settings
+          settings: this.call.settings,
+          audioMuted: this.call.audioMuted,
+          videoMuted: this.call.videoMuted,
+          peerAudioMuted: this.call.peerAudioMuted,
+          peerVideoMuted: this.call.peerVideoMuted
         }
       : null
     this.snapshot = {
